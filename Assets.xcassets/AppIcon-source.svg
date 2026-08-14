@@ -1,0 +1,10 @@
+<svg width="1024" height="1024" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Xtract app icon">
+  <!-- Master, per Xtract App Icon spec sheet 06: 1024 canvas / 200 grid, no pre-baked corner mask (iOS applies the squircle) -->
+  <rect width="200" height="200" fill="#5980a6"/>
+  <g stroke="#f2f2f3" stroke-width="10" stroke-linecap="butt" fill="none">
+    <line x1="52" y1="52" x2="148" y2="148"/>
+    <line x1="148" y1="52" x2="52" y2="148"/>
+    <line x1="148" y1="52" x2="148" y2="122"/>
+  </g>
+  <polygon fill="#f2f2f3" points="130,116 148,150 166,116"/>
+</svg>
