@@ -14,7 +14,9 @@ import type {
 //     cookies. Sees whatever that account can see. Only enabled behind a
 //     password (see xCredentials).
 const SYNDICATION = 'https://cdn.syndication.twimg.com/tweet-result';
-const GRAPHQL_HOST = 'https://api.x.com/graphql';
+// The web client calls its own origin, not api.x.com — the latter rejects the
+// query outright.
+const GRAPHQL_HOST = process.env.X_GRAPHQL_BASE || 'https://x.com/i/api/graphql';
 
 // The public bearer the X web client ships with; it identifies the app, not a user.
 const WEB_BEARER =
@@ -25,7 +27,7 @@ const BROWSER_UA =
 
 // X rotates the GraphQL operation id periodically. Overridable by env so a
 // break can be fixed by editing a Vercel variable, without a code change.
-const QUERY_ID = process.env.X_QUERY_ID || '_8aYOgEDz35BrBcBal1-_w';
+const QUERY_ID = process.env.X_QUERY_ID || '2ICDjqPd81tulZcYrtpTuQ';
 const QUERY_NAME = process.env.X_QUERY_NAME || 'TweetResultByRestId';
 
 function syndicationToken(id: string): string {
@@ -155,35 +157,38 @@ async function viaSyndication(tweetId: string): Promise<Outcome> {
 // ── 2. Authenticated GraphQL ─────────────────────────────────────
 // The feature flags are required and X rejects requests that omit ones it
 // expects. Overridable by env for the same reason as QUERY_ID.
+// X validates this set against the exact query being called, so a stale or
+// extra flag fails the whole request with GRAPHQL_VALIDATION_FAILED.
 const DEFAULT_FEATURES = {
   creator_subscriptions_tweet_preview_api_enabled: true,
-  communities_web_enable_tweet_community_results_fetch: true,
-  c9s_tweet_anatomy_moderator_badge_enabled: true,
-  articles_preview_enabled: true,
+  tweetypie_unmention_optimization_enabled: true,
   responsive_web_edit_tweet_api_enabled: true,
   graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
   view_counts_everywhere_api_enabled: true,
   longform_notetweets_consumption_enabled: true,
-  responsive_web_twitter_article_tweet_consumption_enabled: true,
+  responsive_web_twitter_article_tweet_consumption_enabled: false,
   tweet_awards_web_tipping_enabled: false,
-  creator_subscriptions_quote_tweet_preview_enabled: false,
   freedom_of_speech_not_reach_fetch_enabled: true,
   standardized_nudges_misinfo: true,
   tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-  rweb_video_timestamps_enabled: true,
   longform_notetweets_rich_text_read_enabled: true,
   longform_notetweets_inline_media_enabled: true,
   responsive_web_graphql_exclude_directive_enabled: true,
   verified_phone_label_enabled: false,
+  responsive_web_media_download_video_enabled: false,
   responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
   responsive_web_graphql_timeline_navigation_enabled: true,
   responsive_web_enhance_cards_enabled: false,
 };
 
+const DEFAULT_FIELD_TOGGLES = { withArticleRichContentState: false };
+
 function features(): string {
-  const override = process.env.X_FEATURES;
-  if (override) return override;
-  return JSON.stringify(DEFAULT_FEATURES);
+  return process.env.X_FEATURES || JSON.stringify(DEFAULT_FEATURES);
+}
+
+function fieldToggles(): string {
+  return process.env.X_FIELD_TOGGLES || JSON.stringify(DEFAULT_FIELD_TOGGLES);
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -201,6 +206,7 @@ async function viaAccount(tweetId: string): Promise<AccountAttempt> {
       withVoice: false,
     }),
     features: features(),
+    fieldToggles: fieldToggles(),
   });
 
   let res: Response;
