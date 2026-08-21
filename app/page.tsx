@@ -21,6 +21,7 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>('paste');
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
+  const [diag, setDiag] = useState('');
   const [busy, setBusy] = useState(false);
   const [recents, setRecents] = useState<RecentItem[]>([]);
   const [video, setVideo] = useState<ResolvedTweet | null>(null);
@@ -39,6 +40,7 @@ export default function Home() {
   const resolve = useCallback(async (target: string) => {
     setBusy(true);
     setError('');
+    setDiag('');
     try {
       const res = await fetch('/api/resolve', {
         method: 'POST',
@@ -48,6 +50,22 @@ export default function Home() {
       const body = await res.json();
       if (!res.ok) {
         setError(RESOLVE_ERRORS[body?.error] ?? 'Something went wrong.');
+        // A one-line trace of what each lookup path reported, for debugging a
+        // deployment. Contains no part of the session cookies.
+        const d = body?.diag;
+        setDiag(
+          d
+            ? [
+                `public=${d.publicError ?? '-'}`,
+                `creds=${d.credsPresent ? 'yes' : 'NO'}`,
+                `tried=${d.accountTried ? 'yes' : 'no'}`,
+                d.accountStatus ? `http=${d.accountStatus}` : '',
+                d.accountDetail ? `detail=${d.accountDetail}` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : ''
+        );
         return;
       }
       const data = body as ResolvedTweet;
@@ -215,11 +233,13 @@ export default function Home() {
         <PasteScreen
           url={url}
           error={error}
+          diag={diag}
           busy={busy}
           recents={recents}
           onUrlChange={(next) => {
             setUrl(next);
             if (error) setError('');
+            if (diag) setDiag('');
           }}
           onSubmit={handleSubmit}
           onPickRecent={handlePickRecent}

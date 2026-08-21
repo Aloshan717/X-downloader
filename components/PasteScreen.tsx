@@ -7,6 +7,8 @@ import type { RecentItem } from '@/lib/types';
 type Props = {
   url: string;
   error: string;
+  /** Troubleshooting trace shown under the error; empty in normal operation. */
+  diag?: string;
   busy: boolean;
   recents: RecentItem[];
   onUrlChange: (url: string) => void;
@@ -18,6 +20,7 @@ type Props = {
 export default function PasteScreen({
   url,
   error,
+  diag,
   busy,
   recents,
   onUrlChange,
@@ -84,6 +87,7 @@ export default function PasteScreen({
           </button>
         </div>
         {error && <div className="paste-err">{error}</div>}
+        {diag && <div className="paste-diag">{diag}</div>}
       </div>
 
       <div className="divider-lbl" style={{ justifyContent: 'space-between' }}>
@@ -178,6 +182,14 @@ export default function PasteScreen({
           line-height: 1.4;
           color: var(--accent-700);
           letter-spacing: 0.02em;
+        }
+        .paste-diag {
+          font-family: var(--font-mono), monospace;
+          font-size: 9.5px;
+          line-height: 1.45;
+          color: var(--muted);
+          word-break: break-word;
+          padding-top: 2px;
         }
         .row2 {
           display: grid;

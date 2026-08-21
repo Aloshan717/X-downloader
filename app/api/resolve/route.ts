@@ -28,7 +28,11 @@ export async function POST(request: Request) {
 
   const result = await resolveTweet(tweetId);
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: STATUS[result.error] ?? 502 });
+    // diag carries no secrets, and this route is behind the password gate.
+    return NextResponse.json(
+      { error: result.error, diag: result.diag },
+      { status: STATUS[result.error] ?? 502 }
+    );
   }
 
   return NextResponse.json(result.data);

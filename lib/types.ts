@@ -25,6 +25,18 @@ export type ResolveError =
   | 'not_found'
   | 'fetch_failed';
 
+/**
+ * Why a lookup failed, for troubleshooting a deployment. Records presence and
+ * status only — never any part of the session cookies.
+ */
+export type ResolveDiag = {
+  publicError?: ResolveError;
+  credsPresent: boolean;
+  accountTried: boolean;
+  accountStatus?: number;
+  accountDetail?: string;
+};
+
 export type RecentItem = {
   tweetId: string;
   handle: string;

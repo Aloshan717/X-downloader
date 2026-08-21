@@ -1,6 +1,11 @@
 import 'server-only';
 import { xCredentials } from './auth';
-import type { ResolvedTweet, ResolveError, VideoVariant } from './types';
+import type {
+  ResolvedTweet,
+  ResolveDiag,
+  ResolveError,
+  VideoVariant,
+} from './types';
 
 // Two ways of reading a post, tried in order:
 //  1. The public syndication endpoint that powers embedded tweets. No login,
@@ -63,7 +68,15 @@ function normalizeVariants(raw: RawVariant[] | undefined): VideoVariant[] {
 
 type Outcome =
   | { ok: true; data: ResolvedTweet }
-  | { ok: false; error: ResolveError };
+  | { ok: false; error: ResolveError; diag?: ResolveDiag };
+
+// What the authenticated attempt reported, so a failure can be told apart from
+// missing credentials.
+type AccountAttempt = {
+  outcome: Outcome;
+  status?: number;
+  detail?: string;
+};
 
 // ── 1. Public syndication ────────────────────────────────────────
 async function viaSyndication(tweetId: string): Promise<Outcome> {
@@ -174,9 +187,11 @@ function features(): string {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function viaAccount(tweetId: string): Promise<Outcome> {
+async function viaAccount(tweetId: string): Promise<AccountAttempt> {
   const creds = xCredentials();
-  if (!creds) return { ok: false, error: 'restricted' };
+  if (!creds) {
+    return { outcome: { ok: false, error: 'restricted' }, detail: 'no_credentials' };
+  }
 
   const params = new URLSearchParams({
     variables: JSON.stringify({
@@ -203,28 +218,61 @@ async function viaAccount(tweetId: string): Promise<Outcome> {
       },
       cache: 'no-store',
     });
-  } catch {
-    return { ok: false, error: 'fetch_failed' };
+  } catch (err) {
+    return {
+      outcome: { ok: false, error: 'fetch_failed' },
+      detail: `network:${(err as Error)?.name ?? 'error'}`,
+    };
   }
 
-  // 401/403 almost always mean the session cookies have expired.
-  if (res.status === 401 || res.status === 403) {
-    return { ok: false, error: 'fetch_failed' };
+  const body = await res.text().catch(() => '');
+
+  if (!res.ok) {
+    // 401/403 almost always mean the session cookies have expired.
+    return {
+      outcome: { ok: false, error: 'fetch_failed' },
+      status: res.status,
+      detail: body.slice(0, 180),
+    };
   }
-  if (!res.ok) return { ok: false, error: 'fetch_failed' };
 
   let json: any;
   try {
-    json = await res.json();
+    json = JSON.parse(body);
   } catch {
-    return { ok: false, error: 'fetch_failed' };
+    return {
+      outcome: { ok: false, error: 'fetch_failed' },
+      status: res.status,
+      detail: 'unparseable_body',
+    };
+  }
+
+  // A 200 can still carry GraphQL errors (bad query id, missing feature flags).
+  if (json?.errors?.length) {
+    return {
+      outcome: { ok: false, error: 'fetch_failed' },
+      status: res.status,
+      detail: String(json.errors[0]?.message ?? 'graphql_error').slice(0, 180),
+    };
   }
 
   let result = json?.data?.tweetResult?.result;
   // Limited-visibility posts nest the real tweet one level deeper.
   if (result?.__typename === 'TweetWithVisibilityResults') result = result.tweet;
-  if (!result) return { ok: false, error: 'not_found' };
-  if (result.__typename === 'TweetTombstone') return { ok: false, error: 'restricted' };
+  if (!result) {
+    return {
+      outcome: { ok: false, error: 'not_found' },
+      status: res.status,
+      detail: 'empty_result',
+    };
+  }
+  if (result.__typename === 'TweetTombstone') {
+    return {
+      outcome: { ok: false, error: 'restricted' },
+      status: res.status,
+      detail: 'tombstone',
+    };
+  }
 
   const legacy = result.legacy ?? {};
   const user =
@@ -235,27 +283,42 @@ async function viaAccount(tweetId: string): Promise<Outcome> {
   const media = (legacy.extended_entities?.media ?? legacy.entities?.media ?? []).find(
     (m: any) => m.type === 'video' || m.type === 'animated_gif'
   );
-  if (!media) return { ok: false, error: 'no_video' };
+  if (!media) {
+    return {
+      outcome: { ok: false, error: 'no_video' },
+      status: res.status,
+      detail: 'no_media_in_result',
+    };
+  }
 
   const variants = normalizeVariants(media.video_info?.variants);
-  if (!variants.length) return { ok: false, error: 'no_video' };
+  if (!variants.length) {
+    return {
+      outcome: { ok: false, error: 'no_video' },
+      status: res.status,
+      detail: 'no_mp4_variants',
+    };
+  }
 
   return {
-    ok: true,
-    data: {
-      tweetId,
-      author: {
-        handle: user.screen_name ?? user.screenName ?? 'unknown',
-        name: user.name ?? '',
-        avatarUrl: user.profile_image_url_https ?? '',
+    status: res.status,
+    outcome: {
+      ok: true,
+      data: {
+        tweetId,
+        author: {
+          handle: user.screen_name ?? user.screenName ?? 'unknown',
+          name: user.name ?? '',
+          avatarUrl: user.profile_image_url_https ?? '',
+        },
+        postedAt: legacy.created_at ?? '',
+        text: legacy.full_text ?? legacy.text ?? '',
+        thumbnailUrl: media.media_url_https ?? '',
+        durationLabel: formatDuration(media.video_info?.duration_millis),
+        codec: 'H.264',
+        variants,
+        via: 'account',
       },
-      postedAt: legacy.created_at ?? '',
-      text: legacy.full_text ?? legacy.text ?? '',
-      thumbnailUrl: media.media_url_https ?? '',
-      durationLabel: formatDuration(media.video_info?.duration_millis),
-      codec: 'H.264',
-      variants,
-      via: 'account',
     },
   };
 }
@@ -265,14 +328,33 @@ export async function resolveTweet(tweetId: string): Promise<Outcome> {
   const publicAttempt = await viaSyndication(tweetId);
   if (publicAttempt.ok) return publicAttempt;
 
+  const credsPresent = Boolean(xCredentials());
+  const diag: ResolveDiag = {
+    publicError: publicAttempt.error,
+    credsPresent,
+    accountTried: false,
+  };
+
   // Only worth a second call when the post exists but was withheld, and only
   // when a session is configured.
   const worthRetrying =
     publicAttempt.error === 'restricted' || publicAttempt.error === 'not_found';
-  if (!worthRetrying || !xCredentials()) return publicAttempt;
+  if (!worthRetrying || !credsPresent) {
+    return { ...publicAttempt, diag };
+  }
 
-  const accountAttempt = await viaAccount(tweetId);
+  const attempt = await viaAccount(tweetId);
+  if (attempt.outcome.ok) return attempt.outcome;
+
   // Prefer the authenticated answer, but don't let its failure mask a clearer
-  // public one (e.g. a genuinely deleted post).
-  return accountAttempt.ok ? accountAttempt : publicAttempt;
+  // public one (e.g. a genuinely deleted post). Either way, keep the detail.
+  return {
+    ...publicAttempt,
+    diag: {
+      ...diag,
+      accountTried: true,
+      accountStatus: attempt.status,
+      accountDetail: attempt.detail,
+    },
+  };
 }
