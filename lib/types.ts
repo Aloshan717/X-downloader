@@ -14,11 +14,14 @@ export type ResolvedTweet = {
   durationLabel: string;
   codec: string;
   variants: VideoVariant[];
+  /** Which path produced this — useful when diagnosing a failure. */
+  via: 'public' | 'account';
 };
 
 export type ResolveError =
   | 'invalid_url'
   | 'no_video'
+  | 'restricted'
   | 'not_found'
   | 'fetch_failed';
 

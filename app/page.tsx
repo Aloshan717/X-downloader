@@ -11,8 +11,10 @@ import type { RecentItem, ResolvedTweet, Screen, VideoVariant } from '@/lib/type
 const RESOLVE_ERRORS: Record<string, string> = {
   invalid_url: 'That doesn’t look like an X post link.',
   no_video: 'That post doesn’t contain a video.',
-  not_found: 'Post not found — it may be private or deleted.',
-  fetch_failed: 'Couldn’t reach X. Try again in a moment.',
+  restricted: 'X won’t serve this post without a signed-in account.',
+  not_found: 'Post not found — it may be deleted.',
+  fetch_failed: 'Couldn’t reach X. Your session may have expired.',
+  unauthorized: 'Session expired. Reload and sign in again.',
 };
 
 export default function Home() {

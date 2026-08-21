@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 const STATUS: Record<string, number> = {
   invalid_url: 400,
   no_video: 404,
+  restricted: 403,
   not_found: 404,
   fetch_failed: 502,
 };
