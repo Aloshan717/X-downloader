@@ -4,82 +4,34 @@ import BlueprintMarks from './BlueprintMarks';
 import type { ResolvedTweet, VideoVariant } from '@/lib/types';
 
 export type DownloadState = {
-  status: 'running' | 'paused' | 'done' | 'error';
-  received: number;
-  total: number;
   filename: string;
-  message?: string;
+  /** Set when the browser refused the hand-off and we fell back to a link. */
+  needsManualTap?: boolean;
+  href?: string;
 };
 
 type Props = {
   video: ResolvedTweet;
   variant: VideoVariant;
   state: DownloadState;
-  onPause: () => void;
-  onResume: () => void;
-  onCancel: () => void;
   onDone: () => void;
 };
 
-function formatBytes(bytes: number): string {
-  if (!bytes) return '0 MB';
-  const mb = bytes / 1_000_000;
-  return mb < 10 ? `${mb.toFixed(1)} MB` : `${Math.round(mb)} MB`;
-}
-
-export default function DownloadScreen({
-  video,
-  variant,
-  state,
-  onPause,
-  onResume,
-  onCancel,
-  onDone,
-}: Props) {
-  const pct = state.total
-    ? Math.min(100, Math.round((state.received / state.total) * 100))
-    : 0;
-  const done = state.status === 'done';
-  const errored = state.status === 'error';
-
-  const statusLabel = errored
-    ? 'Failed'
-    : done
-      ? 'Complete · saved'
-      : state.status === 'paused'
-        ? 'Paused'
-        : 'Running · Transfer';
-
+export default function DownloadScreen({ video, variant, state, onDone }: Props) {
   return (
     <div className="scr">
       <div className="kicker">
-        <span className={`dot${state.status === 'running' ? ' pulse' : ''}`} />
-        {statusLabel}
+        <span className="dot" />
+        Handed to your browser
       </div>
       <h2 className="screen-title">
-        {errored ? (
-          <>
-            Download
-            <br />
-            failed.
-          </>
-        ) : done ? (
-          <>
-            Saved to your
-            <br />
-            downloads.
-          </>
-        ) : (
-          <>
-            Downloading
-            <br />
-            at {variant.height}p.
-          </>
-        )}
+        Downloading
+        <br />
+        in the background.
       </h2>
 
       <div className="divider-lbl">
-        <span className="lbl">Current · 01</span>
+        <span className="lbl">File</span>
       </div>
 
       <div className="bp dl-item">
@@ -92,79 +44,37 @@ export default function DownloadScreen({
             )}
           </div>
           <div className="dl-info">
-            <div className="dl-title">
-              @{video.author.handle}
-              {video.text ? ` · ${video.text.slice(0, 48)}` : ''}
-            </div>
+            <div className="dl-title">@{video.author.handle}</div>
             <div className="dl-sub">
-              {variant.width}×{variant.height} · Native ·{' '}
-              {state.total ? formatBytes(state.total) : '—'}
+              {variant.width}×{variant.height} · Native
             </div>
           </div>
         </div>
-
-        <div className="prog-track">
-          <div
-            className={`prog-fill${done ? ' done' : ''}`}
-            style={{ width: `${done ? 100 : pct}%` }}
-          />
-        </div>
-        <div className="prog-meta">
-          <span>
-            {formatBytes(state.received)}
-            {state.total ? ` / ${formatBytes(state.total)}` : ''}
-          </span>
-          <span className="pct">{done ? '100%' : `${pct}%`}</span>
-        </div>
-
-        {state.message && <div className="dl-msg">{state.message}</div>}
-
-        <div className="dl-actions">
-          {state.status === 'running' && (
-            <button className="icn-btn on" onClick={onPause} type="button">
-              Pause
-            </button>
-          )}
-          {state.status === 'paused' && (
-            <button className="icn-btn on" onClick={onResume} type="button">
-              Resume
-            </button>
-          )}
-          {(done || errored) && (
-            <button className="icn-btn on" onClick={onDone} type="button">
-              Done
-            </button>
-          )}
-          <button className="icn-btn" onClick={onCancel} type="button">
-            {done || errored ? 'Close' : 'Cancel'}
-          </button>
-        </div>
+        <div className="fname">{state.filename}</div>
       </div>
 
-      {done && (
-        <div className="bp success">
-          <BlueprintMarks />
-          <div className="tick">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M5 12l5 5L20 7" />
-            </svg>
-          </div>
-          <h3>Saved</h3>
-          <p>
-            {state.filename} · {formatBytes(state.received)}
-          </p>
-          <p className="hint">
-            Find it in your downloads, then use the share sheet to save it into
-            Photos.
-          </p>
-        </div>
+      {state.needsManualTap && state.href && (
+        <a className="btn-primary manual" href={state.href} download={state.filename}>
+          Tap to start <span className="mono">↓</span>
+        </a>
       )}
 
-      <div className="footnote">
-        <span className="lbl">Note</span>
-        Keep this screen open while the transfer runs — leaving the app may stop
-        it.
+      <div className="bp note">
+        <BlueprintMarks />
+        <span className="lbl">You can leave</span>
+        <p>
+          Your browser is doing the transfer now, not Xtract. Switch apps or
+          close this — it keeps going.
+        </p>
+        <p className="where">
+          When it finishes it&rsquo;s in your browser&rsquo;s downloads, and from
+          there you can move it into Photos or Gallery.
+        </p>
       </div>
+
+      <button className="btn-primary" onClick={onDone} type="button">
+        Done <span className="mono">→</span>
+      </button>
 
       <style jsx>{`
         .scr {
@@ -206,97 +116,41 @@ export default function DownloadScreen({
           font-size: 14.5px;
           line-height: 1.2;
           margin-bottom: 4px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
         .dl-sub {
           font-family: var(--font-mono), monospace;
           font-size: 10.5px;
           font-weight: 500;
-          line-height: 1.3;
           letter-spacing: 0.06em;
           color: var(--muted);
           text-transform: uppercase;
         }
-        .prog-track {
-          position: relative;
-          height: 4px;
-          background: var(--neutral-200);
-        }
-        .prog-fill {
-          position: absolute;
-          inset: 0 auto 0 0;
-          background: var(--accent);
-          transition: width 0.15s linear;
-        }
-        .prog-fill.done {
-          background: var(--accent-700);
-        }
-        .prog-meta {
-          display: flex;
-          justify-content: space-between;
+        .fname {
           font-family: var(--font-mono), monospace;
-          font-size: 10.5px;
-          font-weight: 500;
+          font-size: 10px;
+          line-height: 1.45;
           color: var(--muted);
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
+          word-break: break-all;
+          border-top: 1px solid var(--divider);
+          padding-top: 8px;
         }
-        .prog-meta .pct {
-          color: var(--ink);
-          font-weight: 600;
+        .manual {
+          text-decoration: none;
         }
-        .dl-msg {
-          font-family: var(--font-mono), monospace;
-          font-size: 10.5px;
-          line-height: 1.4;
-          color: var(--accent-700);
-        }
-        .dl-actions {
-          display: flex;
-          gap: 6px;
-          margin-top: 4px;
-        }
-        .dl-actions :global(.icn-btn) {
-          flex: 1;
-        }
-        .success {
-          padding: 22px 18px;
+        .note {
+          padding: 16px 14px;
+          margin-top: 16px;
           display: flex;
           flex-direction: column;
-          align-items: flex-start;
-          gap: 10px;
-          margin-top: 16px;
+          gap: 8px;
         }
-        .tick {
-          width: 34px;
-          height: 34px;
-          border: 1px solid var(--accent);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: var(--accent);
-        }
-        .tick svg {
-          width: 20px;
-          height: 20px;
-        }
-        .success h3 {
-          font-family: var(--font-heading), sans-serif;
-          font-weight: 700;
-          font-size: 20px;
-          margin: 0;
-          text-transform: uppercase;
-        }
-        .success p {
+        .note p {
           font-size: 12.5px;
           line-height: 1.5;
           color: var(--muted-strong);
           margin: 0;
-          word-break: break-all;
         }
-        .success .hint {
+        .note .where {
           color: var(--muted);
         }
       `}</style>

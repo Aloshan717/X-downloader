@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import PasteScreen from '@/components/PasteScreen';
 import PreviewScreen from '@/components/PreviewScreen';
 import DownloadScreen, { type DownloadState } from '@/components/DownloadScreen';
@@ -27,11 +27,6 @@ export default function Home() {
   const [video, setVideo] = useState<ResolvedTweet | null>(null);
   const [variant, setVariant] = useState<VideoVariant | null>(null);
   const [dl, setDl] = useState<DownloadState | null>(null);
-
-  // Buffered chunks and transfer bookkeeping survive a pause/resume cycle.
-  const chunksRef = useRef<Uint8Array[]>([]);
-  const receivedRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setRecents(loadRecents());
@@ -97,121 +92,69 @@ export default function Home() {
     return `xtract-${v.author.handle}-${v.tweetId}-${sel.width}x${sel.height}.mp4`;
   }
 
-  // Streams the proxied file, tracking real byte progress. `startAt` lets a
-  // resumed transfer pick up from the bytes already buffered.
-  const transfer = useCallback(
-    async (v: ResolvedTweet, sel: VideoVariant, startAt: number) => {
-      const filename = buildFilename(v, sel);
-      const controller = new AbortController();
-      abortRef.current = controller;
+  // A home-screen web app has no download UI of its own, and iOS in particular
+  // is unreliable about starting one in place.
+  function isStandalone(): boolean {
+    if (typeof window === 'undefined') return false;
+    const iosStandalone = (
+      window.navigator as Navigator & { standalone?: boolean }
+    ).standalone;
+    return (
+      iosStandalone === true ||
+      window.matchMedia?.('(display-mode: standalone)').matches === true
+    );
+  }
 
-      try {
-        const res = await fetch(
-          `/api/download?src=${encodeURIComponent(sel.url)}&filename=${encodeURIComponent(filename)}`,
-          {
-            signal: controller.signal,
-            headers: startAt > 0 ? { Range: `bytes=${startAt}-` } : {},
-          }
-        );
-
-        if (!res.ok && res.status !== 206) throw new Error('upstream');
-        if (!res.body) throw new Error('nobody');
-
-        // Content-Length covers only the requested range, so add what we hold.
-        const lengthHeader = Number(res.headers.get('content-length') ?? 0);
-        const total = lengthHeader ? lengthHeader + startAt : 0;
-
-        setDl({ status: 'running', received: startAt, total, filename });
-
-        const reader = res.body.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunksRef.current.push(value);
-            receivedRef.current += value.byteLength;
-            setDl((prev) =>
-              prev && prev.status === 'running'
-                ? { ...prev, received: receivedRef.current }
-                : prev
-            );
-          }
-        }
-
-        // Assemble and hand the blob to the browser as a real download.
-        const blob = new Blob(chunksRef.current as BlobPart[], { type: 'video/mp4' });
-        const objectUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = filename;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-
-        setDl({
-          status: 'done',
-          received: receivedRef.current,
-          total: receivedRef.current,
-          filename,
-        });
-
-        setRecents(
-          addRecent({
-            tweetId: v.tweetId,
-            handle: v.author.handle,
-            url: `https://x.com/${v.author.handle}/status/${v.tweetId}`,
-            label: `@${v.author.handle}${v.durationLabel ? ` · ${v.durationLabel}` : ''}`,
-            tier: `${sel.height}p`,
-            savedAt: Date.now(),
-          })
-        );
-      } catch (err) {
-        // An abort is a deliberate pause/cancel, not a failure.
-        if ((err as Error)?.name === 'AbortError') return;
-        setDl((prev) => ({
-          status: 'error',
-          received: receivedRef.current,
-          total: prev?.total ?? 0,
-          filename,
-          message: 'Transfer failed. Check your connection and try again.',
-        }));
-      }
-    },
-    []
-  );
-
+  // Hand the transfer to the browser's own download manager rather than
+  // streaming it here. Page JavaScript is suspended as soon as the app is
+  // backgrounded, which stopped any download the moment you switched apps; a
+  // browser download survives that, and survives closing Xtract entirely.
   function handleDownload() {
     if (!video || !variant) return;
-    chunksRef.current = [];
-    receivedRef.current = 0;
+    const filename = buildFilename(video, variant);
+    const href = `/api/download?src=${encodeURIComponent(
+      variant.url
+    )}&filename=${encodeURIComponent(filename)}`;
+
+    let handedOff = false;
+    try {
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = filename;
+      // From a home-screen launch, send it to a full browser context so it
+      // lands in that browser's downloads instead of nowhere.
+      if (isStandalone()) {
+        anchor.target = '_blank';
+        anchor.rel = 'noopener';
+      }
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      handedOff = true;
+    } catch {
+      handedOff = false;
+    }
+
     setScreen('downloading');
-    setDl({
-      status: 'running',
-      received: 0,
-      total: 0,
-      filename: buildFilename(video, variant),
-    });
-    void transfer(video, variant, 0);
-  }
+    setDl({ filename, needsManualTap: !handedOff, href });
 
-  function handlePause() {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setDl((prev) => (prev ? { ...prev, status: 'paused' } : prev));
-  }
-
-  function handleResume() {
-    if (!video || !variant) return;
-    setDl((prev) => (prev ? { ...prev, status: 'running' } : prev));
-    void transfer(video, variant, receivedRef.current);
+    // Recorded on hand-off: the browser owns the transfer from here, so we
+    // never learn whether it finished.
+    setRecents(
+      addRecent({
+        tweetId: video.tweetId,
+        handle: video.author.handle,
+        url: `https://x.com/${video.author.handle}/status/${video.tweetId}`,
+        label: `@${video.author.handle}${
+          video.durationLabel ? ` · ${video.durationLabel}` : ''
+        }`,
+        tier: `${variant.height}p`,
+        savedAt: Date.now(),
+      })
+    );
   }
 
   function reset(target: Screen) {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    chunksRef.current = [];
-    receivedRef.current = 0;
     setDl(null);
     setScreen(target);
     if (target === 'paste') {
@@ -262,9 +205,6 @@ export default function Home() {
           video={video}
           variant={variant}
           state={dl}
-          onPause={handlePause}
-          onResume={handleResume}
-          onCancel={() => reset('paste')}
           onDone={() => reset('paste')}
         />
       )}
